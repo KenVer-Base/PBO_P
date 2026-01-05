@@ -1,7 +1,7 @@
 import mysql.connector
 from datetime import datetime
 
-# Konfigurasi Database
+# --- KONFIGURASI DATABASE ---
 DB_CONFIG = {
     "host": "localhost",
     "user": "root",
@@ -9,11 +9,11 @@ DB_CONFIG = {
     "database": "db_klinik"
 }
 
-# --- PARENT CLASS (BASE) ---
+# --- PARENT CLASS (BASE MODEL) ---
 class DatabaseManager:
     """
-    Kelas Induk yang menangani koneksi database dasar.
-    Semua model lain akan mewarisi kelas ini.
+    Kelas Induk untuk menangani koneksi database.
+    Semua model lain akan mewarisi (Inherit) kelas ini.
     """
     def __init__(self):
         self.config = DB_CONFIG
@@ -23,19 +23,15 @@ class DatabaseManager:
     def connect(self):
         try:
             self.conn = mysql.connector.connect(**self.config)
-            # Menggunakan dictionary=True agar hasil query berupa dict {'nama_kolom': nilai}
             self.cursor = self.conn.cursor(dictionary=True) 
         except mysql.connector.Error as err:
             raise Exception(f"Koneksi Database Gagal: {err}")
 
     def disconnect(self):
-        if self.cursor:
-            self.cursor.close()
-        if self.conn:
-            self.conn.close()
+        if self.cursor: self.cursor.close()
+        if self.conn: self.conn.close()
 
     def fetch_all(self, query, params=None):
-        """Helper untuk mengambil semua data"""
         self.connect()
         try:
             self.cursor.execute(query, params or ())
@@ -44,7 +40,6 @@ class DatabaseManager:
             self.disconnect()
 
     def fetch_one(self, query, params=None):
-        """Helper untuk mengambil satu data"""
         self.connect()
         try:
             self.cursor.execute(query, params or ())
@@ -53,7 +48,6 @@ class DatabaseManager:
             self.disconnect()
 
     def execute_query(self, query, params=None):
-        """Helper untuk Insert/Update/Delete"""
         self.connect()
         try:
             self.cursor.execute(query, params or ())
@@ -65,36 +59,24 @@ class DatabaseManager:
         finally:
             self.disconnect()
 
-
-# --- CHILD CLASSES (INHERITANCE) ---
+# --- CHILD CLASSES (LOGIC MODELS) ---
 
 class AuthModel(DatabaseManager):
-    """Menangani Logika Login, mewarisi DatabaseManager"""
     def login(self, username, password):
-        query = "SELECT * FROM akun WHERE Username=%s AND Password=%s"
-        return self.fetch_one(query, (username, password))
-
+        return self.fetch_one("SELECT * FROM akun WHERE Username=%s AND Password=%s", (username, password))
 
 class MasterDataModel(DatabaseManager):
-    """Menangani CRUD data master (Pasien, Obat, Akun)"""
-    
     def get_all_pasien(self):
         return self.fetch_all("SELECT * FROM pasien ORDER BY Nama ASC")
     
     def get_all_obat(self):
         return self.fetch_all("SELECT * FROM barang")
 
-    def get_all_akun(self):
-        return self.fetch_all("SELECT IdAkun, Username, NamaLengkap, Jobdesk FROM akun")
-
     def tambah_pasien(self, nama, alamat, gender, usia):
         query = "INSERT INTO pasien (Nama, Alamat, Gender, Usia) VALUES (%s, %s, %s, %s)"
         return self.execute_query(query, (nama, alamat, gender, usia))
 
-
 class PendaftaranModel(DatabaseManager):
-    """Menangani Logika Frontdesk"""
-    
     def get_dokter_list(self):
         return self.fetch_all("SELECT IdAkun, NamaLengkap FROM akun WHERE Jobdesk='Dokter'")
 
@@ -107,8 +89,7 @@ class PendaftaranModel(DatabaseManager):
         return self.fetch_all(query)
 
     def buat_registrasi(self, id_pasien, id_dokter, id_frontdesk):
-        # Generate No Reg Otomatis
-        self.connect() # Manual connect karena butuh transaksi kompleks
+        self.connect()
         try:
             today = datetime.now().strftime("%Y%m%d")
             self.cursor.execute(f"SELECT COUNT(*) as cnt FROM pendaftaran WHERE NoReg LIKE 'REG-{today}%'")
@@ -126,11 +107,34 @@ class PendaftaranModel(DatabaseManager):
         finally:
             self.disconnect()
 
+class PerawatModel(DatabaseManager):
+    def get_antrian_perawat(self):
+        # Mengambil pasien status 'Menunggu'
+        query = """SELECT p.NoReg, ps.Nama 
+                   FROM pendaftaran p JOIN pasien ps ON p.IdPasien = ps.IdPasien 
+                   WHERE p.Status='Menunggu'"""
+        return self.fetch_all(query)
+
+    def simpan_pemeriksaan(self, no_reg, id_perawat, tb, bb, suhu, tensi):
+        self.connect()
+        try:
+            # Simpan data fisik
+            q1 = """INSERT INTO pemeriksaanfisik (NoReg, IdAkun_Perawat, TinggiBadan, BeratBadan, Suhu, Tensi)
+                    VALUES (%s, %s, %s, %s, %s, %s)"""
+            self.cursor.execute(q1, (no_reg, id_perawat, tb, bb, suhu, tensi))
+            
+            # Update status jadi 'Diperiksa' (agar masuk ke dokter)
+            self.cursor.execute("UPDATE pendaftaran SET Status='Diperiksa' WHERE NoReg=%s", (no_reg,))
+            self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+            raise e
+        finally:
+            self.disconnect()
 
 class DokterModel(DatabaseManager):
-    """Menangani Logika Dokter & Transaksi Medis"""
-    
     def get_antrian(self, id_dokter):
+        # Dokter melihat pasien 'Menunggu' (backup) atau 'Diperiksa' (yg sudah lewat perawat)
         query = """SELECT p.NoReg, ps.Nama, p.Status 
                    FROM pendaftaran p JOIN pasien ps ON p.IdPasien = ps.IdPasien
                    WHERE p.Status IN ('Menunggu', 'Diperiksa') AND p.IdAkun_Dokter = %s"""
@@ -140,9 +144,6 @@ class DokterModel(DatabaseManager):
         return self.fetch_one("SELECT * FROM pemeriksaanfisik WHERE NoReg=%s", (no_reg,))
 
     def simpan_transaksi_medis(self, no_reg, diagnosa, tarif_tindakan, cart_obat):
-        """
-        Logika kompleks: Simpan Rekam Medis -> Simpan Resep -> Potong Stok -> Buat Tagihan
-        """
         self.connect()
         try:
             # 1. Rekam Medis
@@ -150,7 +151,7 @@ class DokterModel(DatabaseManager):
                                 (no_reg, diagnosa))
             id_rek = self.cursor.lastrowid
             
-            # 2. Resep & Stok
+            # 2. Resep & Potong Stok
             total_obat = 0
             for item in cart_obat:
                 self.cursor.execute("INSERT INTO resepobat (IdRek, IdBarang, Jumlah, SubTotalHarga) VALUES (%s, %s, %s, %s)",
@@ -165,11 +166,9 @@ class DokterModel(DatabaseManager):
                                    VALUES (%s, %s, %s, %s, %s, 'Pending')""",
                                 (no_tagihan, no_reg, tarif_tindakan, total_obat, grand_total))
             
-            # 4. Update Status
+            # 4. Selesai
             self.cursor.execute("UPDATE pendaftaran SET Status='Selesai' WHERE NoReg=%s", (no_reg,))
-            
             self.conn.commit()
-            return True
         except Exception as e:
             self.conn.rollback()
             raise e
