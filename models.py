@@ -58,7 +58,6 @@ class AuthModel(DatabaseManager):
         return self.fetch_one("SELECT * FROM akun WHERE Username=%s AND Password=%s", (username, password))
 
 class MasterDataModel(DatabaseManager):
-    # --- PASIEN ---
     def get_all_pasien(self):
         return self.fetch_all("SELECT * FROM pasien ORDER BY Nama ASC")
     
