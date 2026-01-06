@@ -9,10 +9,6 @@ DB_CONFIG = {
 }
 
 class DatabaseManager:
-    """
-    Kelas Induk untuk menangani koneksi database.
-    Semua model lain akan mewarisi (Inherit) kelas ini.
-    """
     def __init__(self):
         self.config = DB_CONFIG
         self.conn = None
@@ -23,7 +19,7 @@ class DatabaseManager:
             self.conn = mysql.connector.connect(**self.config)
             self.cursor = self.conn.cursor(dictionary=True) 
         except mysql.connector.Error as err:
-            raise Exception(f"Koneksi Database Gagal: {err}")
+            raise Exception(f"Database Error: {err}")
 
     def disconnect(self):
         if self.cursor: self.cursor.close()
@@ -57,21 +53,58 @@ class DatabaseManager:
         finally:
             self.disconnect()
 
-
 class AuthModel(DatabaseManager):
     def login(self, username, password):
         return self.fetch_one("SELECT * FROM akun WHERE Username=%s AND Password=%s", (username, password))
 
 class MasterDataModel(DatabaseManager):
+    # --- PASIEN ---
     def get_all_pasien(self):
         return self.fetch_all("SELECT * FROM pasien ORDER BY Nama ASC")
     
-    def get_all_obat(self):
-        return self.fetch_all("SELECT * FROM barang")
-
     def tambah_pasien(self, nama, alamat, gender, usia):
         query = "INSERT INTO pasien (Nama, Alamat, Gender, Usia) VALUES (%s, %s, %s, %s)"
         return self.execute_query(query, (nama, alamat, gender, usia))
+
+    def get_all_obat(self):
+        query = """SELECT b.*, s.NamaSupplier 
+                   FROM barang b 
+                   LEFT JOIN supplier s ON b.IdSupplier = s.IdSupplier
+                   ORDER BY b.NamaBarang ASC"""
+        return self.fetch_all(query)
+
+    def tambah_obat(self, id_supplier, nama, stok, satuan, harga):
+        query = "INSERT INTO barang (IdSupplier, NamaBarang, Stok, Satuan, HargaSatuan) VALUES (%s, %s, %s, %s, %s)"
+        return self.execute_query(query, (id_supplier, nama, stok, satuan, harga))
+
+    def update_obat_lengkap(self, id_barang, id_supplier, nama, stok, satuan, harga):
+        query = """UPDATE barang 
+                   SET IdSupplier=%s, NamaBarang=%s, Stok=%s, Satuan=%s, HargaSatuan=%s 
+                   WHERE IdBarang=%s"""
+        return self.execute_query(query, (id_supplier, nama, stok, satuan, harga, id_barang))
+
+    def hapus_obat(self, id_barang):
+        return self.execute_query("DELETE FROM barang WHERE IdBarang=%s", (id_barang,))
+
+    def get_all_tindakan(self):
+        return self.fetch_all("SELECT * FROM master_tindakan ORDER BY NamaTindakan ASC")
+
+    def tambah_tindakan(self, nama, tarif):
+        query = "INSERT INTO master_tindakan (NamaTindakan, Tarif) VALUES (%s, %s)"
+        return self.execute_query(query, (nama, tarif))
+
+    def hapus_tindakan(self, id_tindakan):
+        return self.execute_query("DELETE FROM master_tindakan WHERE IdTindakan = %s", (id_tindakan,))
+
+    def get_all_supplier(self):
+        return self.fetch_all("SELECT * FROM supplier ORDER BY NamaSupplier ASC")
+
+    def tambah_supplier(self, nama, alamat, telp):
+        query = "INSERT INTO supplier (NamaSupplier, Alamat, NoTelepon) VALUES (%s, %s, %s)"
+        return self.execute_query(query, (nama, alamat, telp))
+    
+    def hapus_supplier(self, id_supplier):
+        return self.execute_query("DELETE FROM supplier WHERE IdSupplier = %s", (id_supplier,))
 
 class PendaftaranModel(DatabaseManager):
     def get_dokter_list(self):
@@ -82,6 +115,7 @@ class PendaftaranModel(DatabaseManager):
                    FROM pendaftaran p 
                    JOIN pasien ps ON p.IdPasien = ps.IdPasien
                    JOIN akun ak ON p.IdAkun_Dokter = ak.IdAkun
+                   WHERE DATE(p.TanggalDanWaktu) = CURDATE()
                    ORDER BY p.TanggalDanWaktu DESC"""
         return self.fetch_all(query)
 
@@ -90,7 +124,8 @@ class PendaftaranModel(DatabaseManager):
         try:
             today = datetime.now().strftime("%Y%m%d")
             self.cursor.execute(f"SELECT COUNT(*) as cnt FROM pendaftaran WHERE NoReg LIKE 'REG-{today}%'")
-            count = self.cursor.fetchone()['cnt'] + 1
+            res = self.cursor.fetchone()
+            count = res['cnt'] + 1 if res else 1
             no_reg = f"REG-{today}-{count:03d}"
 
             query = """INSERT INTO pendaftaran (NoReg, IdPasien, IdAkun_Frontdesk, IdAkun_Dokter, Status) 
@@ -106,7 +141,6 @@ class PendaftaranModel(DatabaseManager):
 
 class PerawatModel(DatabaseManager):
     def get_antrian_perawat(self):
-        # Mengambil pasien status 'Menunggu'
         query = """SELECT p.NoReg, ps.Nama 
                    FROM pendaftaran p JOIN pasien ps ON p.IdPasien = ps.IdPasien 
                    WHERE p.Status='Menunggu'"""
@@ -115,12 +149,9 @@ class PerawatModel(DatabaseManager):
     def simpan_pemeriksaan(self, no_reg, id_perawat, tb, bb, suhu, tensi):
         self.connect()
         try:
-            # Simpan data fisik
             q1 = """INSERT INTO pemeriksaanfisik (NoReg, IdAkun_Perawat, TinggiBadan, BeratBadan, Suhu, Tensi)
                     VALUES (%s, %s, %s, %s, %s, %s)"""
             self.cursor.execute(q1, (no_reg, id_perawat, tb, bb, suhu, tensi))
-            
-            # Update status jadi 'Diperiksa' (agar masuk ke dokter)
             self.cursor.execute("UPDATE pendaftaran SET Status='Diperiksa' WHERE NoReg=%s", (no_reg,))
             self.conn.commit()
         except Exception as e:
@@ -131,7 +162,6 @@ class PerawatModel(DatabaseManager):
 
 class DokterModel(DatabaseManager):
     def get_antrian(self, id_dokter):
-        # Dokter melihat pasien 'Menunggu' (backup) atau 'Diperiksa' (yg sudah lewat perawat)
         query = """SELECT p.NoReg, ps.Nama, p.Status 
                    FROM pendaftaran p JOIN pasien ps ON p.IdPasien = ps.IdPasien
                    WHERE p.Status IN ('Menunggu', 'Diperiksa') AND p.IdAkun_Dokter = %s"""
@@ -143,12 +173,10 @@ class DokterModel(DatabaseManager):
     def simpan_transaksi_medis(self, no_reg, diagnosa, tarif_tindakan, cart_obat):
         self.connect()
         try:
-            # 1. Rekam Medis
             self.cursor.execute("INSERT INTO rekammedis (NoReg, Diagnosa, CatatanDokter) VALUES (%s, %s, 'Resep Diberikan')", 
                                 (no_reg, diagnosa))
             id_rek = self.cursor.lastrowid
             
-            # 2. Resep & Potong Stok
             total_obat = 0
             for item in cart_obat:
                 self.cursor.execute("INSERT INTO resepobat (IdRek, IdBarang, Jumlah, SubTotalHarga) VALUES (%s, %s, %s, %s)",
@@ -156,14 +184,12 @@ class DokterModel(DatabaseManager):
                 self.cursor.execute("UPDATE barang SET Stok = Stok - %s WHERE IdBarang=%s", (item['qty'], item['id']))
                 total_obat += item['sub']
             
-            # 3. Tagihan
             grand_total = tarif_tindakan + total_obat
             no_tagihan = f"INV-{no_reg}"
             self.cursor.execute("""INSERT INTO tagihan (NoTagihan, NoReg, TotalBiayaTindakan, TotalBiayaObat, GrandTotal, StatusBayar)
                                    VALUES (%s, %s, %s, %s, %s, 'Pending')""",
                                 (no_tagihan, no_reg, tarif_tindakan, total_obat, grand_total))
             
-            # 4. Selesai
             self.cursor.execute("UPDATE pendaftaran SET Status='Selesai' WHERE NoReg=%s", (no_reg,))
             self.conn.commit()
         except Exception as e:
