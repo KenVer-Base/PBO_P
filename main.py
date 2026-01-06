@@ -1,6 +1,5 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-# Import Logic Model
 from models import AuthModel, MasterDataModel, PendaftaranModel, DokterModel, KasirModel, PerawatModel
 
 CURRENT_USER = {"IdAkun": None, "Nama": None, "Role": None}
@@ -8,7 +7,7 @@ CURRENT_USER = {"IdAkun": None, "Nama": None, "Role": None}
 class MainApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Sistem Informasi Klinik Terpadu (OOP Version)")
+        self.title("Sistem Klinik")
         self.state("zoomed") 
         
         style = ttk.Style()
@@ -32,7 +31,6 @@ class MainApp(tk.Tk):
         for widget in self.container.winfo_children():
             widget.destroy()
 
-# --- BASE PAGE HELPER ---
 class BasePage(tk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
@@ -46,7 +44,6 @@ class BasePage(tk.Frame):
     def show_warning(self, message):
         messagebox.showwarning("Peringatan", message)
 
-# --- LOGIN ---
 class LoginFrame(BasePage):
     def __init__(self, parent, controller):
         super().__init__(parent)
@@ -85,25 +82,21 @@ class LoginFrame(BasePage):
         except Exception as e:
             self.show_error(str(e))
 
-# --- DASHBOARD UTAMA ---
 class Dashboard(BasePage):
     def __init__(self, parent, controller):
         super().__init__(parent)
         
-        # Header
         header = ttk.Frame(self, padding=10)
         header.pack(fill="x")
         ttk.Label(header, text=f"User: {CURRENT_USER['Nama']} ({CURRENT_USER['Role']})", 
                   font=("Arial", 12, "bold")).pack(side="left")
         ttk.Button(header, text="Logout", command=controller.show_login).pack(side="right")
         
-        # Notebook (Tab)
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=10, pady=10)
         
         role = CURRENT_USER['Role']
         
-        # --- LOGIKA TAB BERDASARKAN ROLE ---
         if role == 'Admin':
             nb.add(FrameMasterPasien(nb), text="Master Pasien")
             nb.add(FrameMasterObat(nb), text="Master Obat")
@@ -111,7 +104,6 @@ class Dashboard(BasePage):
         if role in ['Frontdesk', 'Admin']:
             nb.add(FramePendaftaran(nb), text="Pendaftaran")
 
-        # [FIX] Menambahkan Menu Perawat
         if role in ['Perawat', 'Admin']:
             nb.add(FramePerawat(nb), text="Pemeriksaan Fisik")
 
@@ -121,7 +113,6 @@ class Dashboard(BasePage):
         if role in ['Kasir', 'Admin']:
             nb.add(FrameKasir(nb), text="Kasir")
 
-# --- FRAME MASTER DATA (Inheritance BaseCRUD) ---
 class BaseCRUD(BasePage):
     def __init__(self, parent, title):
         super().__init__(parent)
@@ -159,7 +150,6 @@ class FrameMasterObat(BaseCRUD):
         for r in self.model.get_all_obat():
             self.tree.insert("", "end", values=(r['IdBarang'], r['NamaBarang'], r['Stok'], r['Satuan'], r['HargaSatuan']))
 
-# --- FRAME PENDAFTARAN ---
 class FramePendaftaran(BasePage):
     def __init__(self, parent):
         super().__init__(parent)
@@ -207,7 +197,6 @@ class FramePendaftaran(BasePage):
             self.show_error(str(e))
 
     def popup_pasien(self):
-        # [FIX] Popup Input Pasien dengan Dropdown Gender
         win = tk.Toplevel(self)
         win.title("Pasien Baru")
         win.geometry("300x350")
@@ -217,7 +206,6 @@ class FramePendaftaran(BasePage):
 
         ttk.Label(f, text="Nama:").pack(anchor="w"); e_nm = ttk.Entry(f); e_nm.pack(fill="x", pady=5)
         
-        # [FIX] Menggunakan Combobox (Pilihan)
         ttk.Label(f, text="Gender:").pack(anchor="w")
         cb_gender = ttk.Combobox(f, values=["L", "P"], state="readonly")
         cb_gender.pack(fill="x", pady=5)
@@ -237,7 +225,6 @@ class FramePendaftaran(BasePage):
             
         ttk.Button(f, text="Simpan", command=save).pack(pady=10)
 
-# --- FRAME PERAWAT ---
 class FramePerawat(BasePage):
     def __init__(self, parent):
         super().__init__(parent)
@@ -277,7 +264,6 @@ class FramePerawat(BasePage):
         except Exception as e:
             self.show_error(str(e))
 
-# --- FRAME DOKTER ---
 class FrameDokter(BasePage):
     def __init__(self, parent):
         super().__init__(parent)
@@ -342,7 +328,6 @@ class FrameDokter(BasePage):
         except Exception as e:
             self.show_error(str(e))
 
-# --- FRAME KASIR ---
 class FrameKasir(BaseCRUD):
     def __init__(self, parent):
         super().__init__(parent, "Kasir - Pending Payment")

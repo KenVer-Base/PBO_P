@@ -1,7 +1,6 @@
 import mysql.connector
 from datetime import datetime
 
-# --- KONFIGURASI DATABASE ---
 DB_CONFIG = {
     "host": "localhost",
     "user": "root",
@@ -9,7 +8,6 @@ DB_CONFIG = {
     "database": "db_klinik"
 }
 
-# --- PARENT CLASS (BASE MODEL) ---
 class DatabaseManager:
     """
     Kelas Induk untuk menangani koneksi database.
@@ -59,7 +57,6 @@ class DatabaseManager:
         finally:
             self.disconnect()
 
-# --- CHILD CLASSES (LOGIC MODELS) ---
 
 class AuthModel(DatabaseManager):
     def login(self, username, password):
