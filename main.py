@@ -53,7 +53,7 @@ class LoginFrame(BasePage):
         bg = ttk.Frame(self)
         bg.place(relx=0.5, rely=0.5, anchor="center")
         
-        ttk.Label(bg, text="LOGIN SISTEM OOP", font=("Arial", 16, "bold")).pack(pady=20)
+        ttk.Label(bg, text="LOGIN", font=("Arial", 16, "bold")).pack(pady=20)
         
         f = ttk.LabelFrame(bg, text="Masuk", padding=20)
         f.pack(fill="both")
